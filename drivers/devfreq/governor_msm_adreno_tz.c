@@ -58,8 +58,24 @@ static DEFINE_SPINLOCK(suspend_lock);
 
 #define TAG "msm_adreno_tz: "
 
-static u64 suspend_time;
-static u64 suspend_start;
+#define USEC_PER_MINUTE (1*60*1000*1000)
+#define NMAX (15*60*60+1)
+
+struct gpu_load_data {
+	unsigned long total_time;
+	unsigned long busy_time;
+	u64 update_time;
+};
+
+struct gpu_load_queue {
+	struct gpu_load_data *gpu_load;
+	int head;
+	int tail;
+};
+
+static u64 suspend_time, suspend_time_idd;
+static u64 suspend_start, suspend_start_idd;
+static unsigned int adrenoboost = 10000;
 static unsigned long acc_total, acc_relative_busy;
 
 static struct msm_adreno_extended_profile *partner_gpu_profile;
@@ -87,6 +103,45 @@ u64 suspend_time_ms(void)
 	suspend_start = suspend_sampling_time;
 	return time_diff;
 }
+
+u64 suspend_time_ms_idd(void)
+{
+	u64 suspend_sampling_time;
+	u64 time_diff = 0;
+
+	if (suspend_start_idd == 0)
+		return 0;
+
+	suspend_sampling_time = (u64)ktime_to_ms(ktime_get());
+	time_diff = suspend_sampling_time - suspend_start_idd;
+	/* Update the suspend_start sample again */
+	suspend_start_idd = suspend_sampling_time;
+	return time_diff;
+}
+
+static ssize_t adrenoboost_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	size_t count = 0;
+	count += sprintf(buf, "%d\n", adrenoboost);
+
+	return count;
+}
+
+static ssize_t adrenoboost_save(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int input;
+	sscanf(buf, "%d ", &input);
+	if (input < 0 || input > 50000) {
+		adrenoboost = 0;
+	} else {
+		adrenoboost = input;
+	}
+
+	return count;
+}
+
 
 static ssize_t gpu_load_show(struct device *dev,
 		struct device_attribute *attr,
@@ -134,6 +189,28 @@ static ssize_t suspend_time_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%llu\n", time_diff);
 }
 
+static ssize_t suspend_time_idd_show(struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	u64 time_diff = 0;
+
+	spin_lock(&suspend_lock);
+	time_diff = suspend_time_ms_idd();
+	/*
+	 * Adding the previous suspend time also as the gpu
+	 * can go and come out of suspend states in between
+	 * reads also and we should have the total suspend
+	 * since last read.
+	 */
+	suspend_time_idd += time_diff;
+	spin_unlock(&suspend_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", suspend_time_idd);
+}
+static DEVICE_ATTR(adrenoboost, 0644,
+		adrenoboost_show, adrenoboost_save);
+
 static DEVICE_ATTR(gpu_load, 0444, gpu_load_show, NULL);
 
 static DEVICE_ATTR(suspend_time, 0444,
@@ -143,6 +220,7 @@ static DEVICE_ATTR(suspend_time, 0444,
 static const struct device_attribute *adreno_tz_attr_list[] = {
 		&dev_attr_gpu_load,
 		&dev_attr_suspend_time,
+		&dev_attr_adrenoboost,
 		NULL
 };
 
@@ -410,7 +488,7 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq, u32 
 
 		scm_data[0] = level;
 		scm_data[1] = priv->bin.total_time;
-		scm_data[2] = priv->bin.busy_time;
+		scm_data[2] = priv->bin.busy_time + (level * adrenoboost);
 		scm_data[3] = context_count;
 		__secure_tz_update_entry3(scm_data, sizeof(scm_data),
 					&val, sizeof(val), priv);
