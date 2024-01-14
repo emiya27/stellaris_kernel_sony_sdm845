@@ -192,25 +192,6 @@ static ssize_t suspend_time_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%llu\n", time_diff);
 }
 
-static ssize_t suspend_time_idd_show(struct device *dev,
-	struct device_attribute *attr,
-	char *buf)
-{
-	u64 time_diff = 0;
-
-	spin_lock(&suspend_lock);
-	time_diff = suspend_time_ms_idd();
-	/*
-	 * Adding the previous suspend time also as the gpu
-	 * can go and come out of suspend states in between
-	 * reads also and we should have the total suspend
-	 * since last read.
-	 */
-	suspend_time_idd += time_diff;
-	spin_unlock(&suspend_lock);
-
-	return snprintf(buf, PAGE_SIZE, "%llu\n", suspend_time_idd);
-}
 #if 1
 static DEVICE_ATTR(adrenoboost, 0644,
 		adrenoboost_show, adrenoboost_save);

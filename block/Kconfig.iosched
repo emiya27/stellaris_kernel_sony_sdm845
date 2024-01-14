@@ -121,7 +121,6 @@ choice
 
 	config DEFAULT_ANXIETY
 		bool "Anxiety" if IOSCHED_ANXIETY=y
-endchoice
 
 endchoice
 
